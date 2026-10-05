@@ -1,0 +1,22 @@
+# Pulled data, rebuilt by python -m src.build_data
+data/
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Local planning docs
+PLAN.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
