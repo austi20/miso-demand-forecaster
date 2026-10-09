@@ -10,6 +10,12 @@ No. Over a 12 month walk forward backtest (October 2025 through September 2026, 
 
 Both are far better than the naive guess of "same hour last week," which missed by 7.28%.
 
+## Live status
+
+<!-- status:start -->
+No drift. Last scored day 2026-10-07. 14 day MAPE: LightGBM 2.20%, EIA 1.30%. Backtest LightGBM was 3.05%. 0 of 14 scored days were forecast live, the rest replayed.
+<!-- status:end -->
+
 ## What I expected and did not get
 
 I expected the weather to be the excuse. My model only sees a temperature forecast made 48 hours ahead, so I also scored it with the temperature that actually happened, which no real forecaster has. Even with perfect weather it missed by 2.82%, still behind EIA's 2.60%. Pooled over the year, perfect weather closes about half the gap, but the effect is not steady: it helped in 8 months, hurt in 3 and tied in 1.
@@ -65,6 +71,19 @@ All three methods are scored on the same hours. Hours where EIA has no forecast 
 
 I fixed the features and settings before the first backtest run and did not tune them after seeing the results. Tuning against the test months would make the comparison with EIA meaningless. The one change since was a bug fix: my first holiday rule moved Saturday holidays to Friday, which NERC does not do. It moved July and August by less than 0.1 points and left the overall numbers the same.
 
+## The nightly pipeline
+
+`.github/workflows/nightly.yml` runs on GitHub Actions at 12:00 UTC every day, which is 6 or 7 am Central. It does four things:
+
+1. Rebuilds the three parquet files from the APIs.
+2. Retrains the model on everything known by this morning and forecasts all of tomorrow, using the same six features as the backtest. The forecast goes into `metrics/forecasts.csv` and is never overwritten.
+3. Scores every stored forecast whose day now has a full 24 hours of actual demand. EIA's forecast and same hour last week are scored on the same hours. The results go into `metrics/daily_scores.csv`.
+4. Compares the last 14 scored days with the backtest. If the 14 day LightGBM MAPE is more than 50% above the backtest's 3.05%, the Live status section at the top of this README says so. Until 14 days are scored it reports how many it has.
+
+The workflow commits `metrics/` and the status line back to the repo, so the history of live scores is the git log.
+
+The first 14 scored days (2026-09-24 to 2026-10-07) are replays, marked `replay` in the `source` column. I ran the same code for those past days on the day I built the pipeline. Each replay model trains only on data before that day, and uses the temperature forecast made 48 hours ahead, but the demand history is the revised data as of today, not what was on the site that morning. Live rows are marked `live`. The status line counts both.
+
 ## The data
 
 - **Demand and the day ahead forecast** come from the [EIA Open Data API v2](https://www.eia.gov/opendata/), route `electricity/rto/region-data`, which serves Form EIA-930 hourly data. `src/pull_eia.py` pulls types `D` (demand) and `DF` (day ahead forecast) for `respondent=MISO` from 2023-01-01 to the current hour, about 66,000 rows at 5,000 rows per call.
@@ -91,12 +110,15 @@ pip install -r requirements.txt
 cp .env.example .env        # then add a free key from https://www.eia.gov/opendata/
 python -m src.build_data
 python -m src.backtest
+python -m src.nightly
 pytest
 ```
 
 `python -m src.build_data` writes `data/raw/eia_miso.parquet`, `data/raw/weather_miso.parquet` and `data/raw/weather_forecast_miso.parquet`. It takes about a minute.
 
-`python -m src.backtest` runs the 12 folds, writes `results/backtest.csv` and `results/backtest.png`, and logs one parent run plus one nested run per method to a local MLflow store. To browse the runs:
+`python -m src.backtest` runs the 12 folds, writes `results/backtest.csv` and `results/backtest.png`, and logs one parent run plus one nested run per method to a local MLflow store. `python -m src.nightly` makes tomorrow's forecast, scores finished days and updates the status line. Add `--replay-days 14` to forecast and score the last 14 days as if they were live.
+
+To browse the MLflow runs:
 
 ```bash
 mlflow ui --backend-store-uri sqlite:///mlflow.db
@@ -108,10 +130,11 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 - Four city temperatures are a rough proxy for a footprint covering 15 states. None of the four is in MISO South (Louisiana, Arkansas, Mississippi, east Texas), and the plain average weights Minneapolis the same as Chicago.
 - The model trains on reanalysis temperature and is scored on a weather model's forecast, and the two disagree: the forecast runs 1.1 F warm over the test year, with an average absolute gap of 2.2 F. Scoring on observed weather instead flatters the model by 0.23 points of MAPE (2.82% vs 3.05%).
 - I do not know exactly when MISO's day ahead forecast is issued or what it knows at that time. If it is made later than the morning before, the comparison favors EIA.
+- The drift check compares 14 days with a 12 month average. A mild October week and a January cold snap have very different baseline errors, so the check can fire on weather alone. The backtest months range from 2.5% to 4.0%.
 - One year of test months is 12 numbers. The model losing 9 of 12 is a clear result, but the size of the gap could move with a different year.
 
 ## What I would do next
 
 - Train on forecast temperatures instead of observed ones, so training and scoring see the same source.
 - Add temperatures from MISO South and weight cities by load instead of a plain average.
-- Run the pull, score and forecast nightly on GitHub Actions and track live error against the backtest.
+- Log the nightly retrain to MLflow too. Right now the live scores are in a CSV and MLflow only holds the backtest.

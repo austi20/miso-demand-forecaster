@@ -1,0 +1,36 @@
+name: nightly
+
+on:
+  schedule:
+    # 12:00 UTC is 6 or 7 am Central, the morning before the forecast day
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: nightly
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Pull data
+        run: python -m src.build_data
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+      - name: Forecast, score, check drift
+        run: python -m src.nightly
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add metrics README.md
+          git diff --cached --quiet || git commit -m "chore: nightly forecast and scores"
+          git push
