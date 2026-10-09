@@ -76,7 +76,7 @@ I fixed the features and settings before the first backtest run and did not tune
 `.github/workflows/nightly.yml` runs on GitHub Actions at 12:00 UTC every day, which is 6 or 7 am Central. It does four things:
 
 1. Rebuilds the three parquet files from the APIs.
-2. Retrains the model on everything known by this morning and forecasts all of tomorrow, using the same six features as the backtest. The forecast goes into `metrics/forecasts.csv` and is never overwritten.
+2. Retrains the model on everything through the end of yesterday and forecasts all of tomorrow, using the same six features as the backtest. The forecast goes into `metrics/forecasts.csv` and is never overwritten.
 3. Scores every stored forecast whose day now has a full 24 hours of actual demand. EIA's forecast and same hour last week are scored on the same hours. The results go into `metrics/daily_scores.csv`.
 4. Compares the last 14 scored days with the backtest. If the 14 day LightGBM MAPE is more than 50% above the backtest's 3.05%, the Live status section at the top of this README says so. Until 14 days are scored it reports how many it has.
 

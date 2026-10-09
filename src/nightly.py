@@ -52,6 +52,9 @@ def forecast_day(eia: pd.DataFrame, observed: pd.Series, forecast_temp: pd.Serie
     model.fit(train[FEATURES], train[TARGET])
 
     inputs = frame.loc[hours, FEATURES].assign(temp_f=forecast_temp.reindex(hours))
+    # late EIA data or missing weather must fail the job, not store a bad forecast
+    if inputs.isna().any().any():
+        raise ValueError(f"missing inputs for {day.date()}, forecast not made")
     return pd.DataFrame({"forecast_mwh": model.predict(inputs)}, index=hours)
 
 
@@ -71,6 +74,7 @@ def score_day(forecast: pd.DataFrame, eia: pd.DataFrame) -> dict | None:
     """Score one day against actuals, or None until every hour has demand."""
     eia = eia.reindex(forecast.index)
     if eia["demand_mwh"].isna().any():
+        print("Waiting on actuals")
         return None
     # same hours for every method, like the backtest
     hours = pd.DataFrame({
@@ -89,18 +93,24 @@ def score_day(forecast: pd.DataFrame, eia: pd.DataFrame) -> dict | None:
     return row
 
 
+def weighted_mape(recent: pd.DataFrame, column: str) -> float:
+    """MAPE across days, weighted by hours scored."""
+    return float((recent[column] * recent["n_hours"]).sum() / recent["n_hours"].sum())
+
+
 def drift_status(scores: pd.DataFrame, baseline: float) -> tuple[str, float, int]:
     """State, rolling LightGBM MAPE and days used over the last 14 scored days."""
     recent = scores.sort_values("day").tail(DRIFT_WINDOW_DAYS)
     n_days = len(recent)
     if n_days < DRIFT_WINDOW_DAYS:
         return "collecting", float("nan"), n_days
-    rolling = (recent["lightgbm_mape"] * recent["n_hours"]).sum() / recent["n_hours"].sum()
+    rolling = weighted_mape(recent, "lightgbm_mape")
     state = "warning" if rolling > DRIFT_LIMIT * baseline else "ok"
-    return state, float(rolling), n_days
+    return state, rolling, n_days
 
 
 def replace_status(readme: str, block: str) -> str:
+    """Swap the text between the two status markers."""
     start = readme.index(STATUS_START) + len(STATUS_START)
     end = readme.index(STATUS_END)
     return readme[:start] + "\n" + block + "\n" + readme[end:]
@@ -116,8 +126,8 @@ def status_text(scores: pd.DataFrame, baseline: float) -> str:
                 f"last scored day {last}. {tail}")
 
     recent = scores.sort_values("day").tail(DRIFT_WINDOW_DAYS)
-    eia_mape = (recent["eia_mape"] * recent["n_hours"]).sum() / recent["n_hours"].sum()
-    line = (f"Last scored day {last}. 14 day MAPE: LightGBM {rolling:.2f}%, "
+    eia_mape = weighted_mape(recent, "eia_mape")
+    line = (f"Last scored day {last}. {DRIFT_WINDOW_DAYS} day MAPE: LightGBM {rolling:.2f}%, "
             f"EIA {eia_mape:.2f}%. Backtest LightGBM was {baseline:.2f}%. {tail}")
     if state == "warning":
         return f"**Drift warning.** {line} The limit is {DRIFT_LIMIT * baseline:.2f}%."
@@ -125,6 +135,7 @@ def status_text(scores: pd.DataFrame, baseline: float) -> str:
 
 
 def load_csv(path: Path, columns: list[str]) -> pd.DataFrame:
+    # first run has no file yet
     if path.exists():
         return pd.read_csv(path)
     return pd.DataFrame(columns=columns)

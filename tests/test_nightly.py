@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from src import nightly
-from src.features import CENTRAL, FEATURES, TARGET
 
 
 def test_day_hours_cover_one_central_day_in_utc():
@@ -30,15 +29,14 @@ def test_extend_to_adds_empty_hours_through_the_target_day():
 
 def make_day(day, actual, lightgbm, eia):
     hours = nightly.day_hours(pd.Timestamp(day))
-    n = len(hours)
     forecast = pd.DataFrame({"forecast_mwh": lightgbm}, index=hours)
     eia_frame = pd.DataFrame({"demand_mwh": actual, "forecast_mwh": eia}, index=hours)
     eia_frame["demand_lag168"] = 100.0
-    return forecast, eia_frame, n
+    return forecast, eia_frame
 
 
 def test_score_day_compares_all_three_methods():
-    forecast, eia, _ = make_day("2026-10-07", 100.0, 110.0, 95.0)
+    forecast, eia = make_day("2026-10-07", 100.0, 110.0, 95.0)
     row = nightly.score_day(forecast, eia)
 
     assert row["lightgbm_mape"] == pytest.approx(10.0)
@@ -48,13 +46,13 @@ def test_score_day_compares_all_three_methods():
 
 
 def test_score_day_waits_for_a_complete_day():
-    forecast, eia, _ = make_day("2026-10-07", 100.0, 110.0, 95.0)
+    forecast, eia = make_day("2026-10-07", 100.0, 110.0, 95.0)
     eia.iloc[-1, eia.columns.get_loc("demand_mwh")] = np.nan
     assert nightly.score_day(forecast, eia) is None
 
 
 def test_score_day_drops_hours_where_eia_has_no_forecast():
-    forecast, eia, _ = make_day("2026-10-07", 100.0, 110.0, 95.0)
+    forecast, eia = make_day("2026-10-07", 100.0, 110.0, 95.0)
     eia.iloc[:4, eia.columns.get_loc("forecast_mwh")] = np.nan
     assert nightly.score_day(forecast, eia)["n_hours"] == 20
 
@@ -65,7 +63,7 @@ def scores_with(mapes):
 
 
 def test_drift_waits_for_enough_days():
-    state, rolling, n_days = nightly.drift_status(scores_with([3.0] * 5), baseline=3.0)
+    state, _, n_days = nightly.drift_status(scores_with([3.0] * 5), baseline=3.0)
     assert state == "collecting"
     assert n_days == 5
 
@@ -107,3 +105,14 @@ def test_forecast_day_returns_one_row_per_hour_of_the_target_day():
 
     assert list(out.index) == list(hours)
     assert out["forecast_mwh"].between(50000, 70000).all()
+
+
+def test_forecast_day_refuses_to_forecast_with_stale_demand():
+    index = pd.date_range("2026-09-01", "2026-10-07 12:00", freq="h", tz="UTC")
+    eia = pd.DataFrame({"demand_mwh": 60000.0, "forecast_mwh": 60000.0}, index=index)
+    observed = pd.Series(60.0, index=index)
+    day = pd.Timestamp("2026-10-09")
+    forecast_temp = pd.Series(55.0, index=nightly.day_hours(day))
+
+    with pytest.raises(ValueError, match="missing inputs"):
+        nightly.forecast_day(eia, observed, forecast_temp, day)
