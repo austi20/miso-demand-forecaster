@@ -13,7 +13,7 @@ Both are far better than the naive guess of "same hour last week," which missed 
 ## Live status
 
 <!-- status:start -->
-No drift. Last scored day 2026-11-16. 14 day MAPE: LightGBM 3.43%, EIA 2.42%. Backtest LightGBM was 3.05%. 38 of 52 scored days were forecast live, the rest replayed.
+No drift. Last scored day 2026-11-17. 14 day MAPE: LightGBM 3.54%, EIA 2.61%. Backtest LightGBM was 3.05%. 39 of 53 scored days were forecast live, the rest replayed.
 <!-- status:end -->
 
 ## What I expected and did not get
